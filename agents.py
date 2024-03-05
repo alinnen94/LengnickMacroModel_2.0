@@ -1,4 +1,5 @@
 from mesa import Agent
+import numpy as np
 import random
 import math
 
@@ -37,8 +38,10 @@ class Firm(Agent):
         self.inv += self.lambda_ * self.getTypeB().size()
 
     # following eq(5) in main paper
-    def newWage(self):
+    def new_wage(self):
+        random_factor = np.random.uniform(-self.delta, self.delta)
         self.w = self.w * (1) # + getRnd().getDblFromTo(-self.delta, self.delta)
+        print(f"Firm {self.unique_id} has a new wage of {random_factor}")
 
     # following eq(6) and (7) in main paper
     def updateInvRange(self):
@@ -87,4 +90,3 @@ class Household(Agent):
 
     def updateConsumption(self):
         self.c = 1 # math.min(self.m / self.P) * Math.exp(self.alpha), self.m / self.P
-

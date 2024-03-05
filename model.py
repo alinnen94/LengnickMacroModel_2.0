@@ -2,11 +2,11 @@
 This model is built following Lengnick(2013) paper on
 Journal of Economic Behavior & Organization 86 (2013) 102– 120.
 """
-
+import agents
 from agents import Firm, Household
 from mesa import Model
 from mesa.datacollection import DataCollector
-from mesa.time import RandomActivation
+from mesa.time import RandomActivation, BaseScheduler, DiscreteEventScheduler
 import numpy as np
 import random
 import pandas as pd
@@ -52,11 +52,14 @@ class MacroModel(Model):
                  Theta=0.75):
 
         super().__init__()
+        self.schedule = DiscreteEventScheduler(self, time_step=21)
         self.num_households = init_households
         self.num_firms = F
         self.Household_list = []
         self.Firm_list = []
-        self.schedule = RandomActivation(self)
+        self.current_day = 1
+        # self.schedule_events()
+        # self.schedule = RandomActivation(self)
 
         # Initialise random number generator. The same seed produces the same random number sequence
         np.random.seed(seed)
@@ -93,7 +96,7 @@ class MacroModel(Model):
 
         # Type B connections
         for household in self.Household_list:
-            newF = random.randint(0, len(self.Firm_list))
+            newF = random.randint(0, len(self.Firm_list) - 1)
             household.connections_typeB.append(newF)
             self.Firm_list[newF].connections_typeB.append(household)
 
@@ -102,15 +105,14 @@ class MacroModel(Model):
             counter = 0
 
             while counter < num_typeA:
+                f = np.random.randint(0, len(self.Firm_list) - 1)
+                firm = self.Firm_list[f]
 
-
-        for household in self.Household_list:
-            typeA_connections = random.sample(self.Firm_list, 7)
-            household.connections_typeA = typeA_connections
-
-        for firm in self.Firm_list:
-            typeB_connections = random.sample(self.Household_list, 10)
-            firm.connections_typeB = typeB_connections
+                if firm not in household.connections_typeA:
+                    household.connections_typeA.append(firm)
+                    counter += 1
+                else:
+                    continue
 
         # Variables to collect data for
         self.datacollector = DataCollector(
@@ -122,6 +124,52 @@ class MacroModel(Model):
             },
             agent_reporters={}
         )
+
+    # Schedule events
+        # Beginning of the month events
+    def beginning_month_events(self):
+        # Firms assign new wage (equation 5 in main paper)
+        for firm in self.Firm_list:
+            firm.new_wage()
+        # {"agent": "Firm", "method": "updateInvRange"},
+        # {"agent": "Firm", "method": "updatePriceRange"},
+        # {"agent": "Firm", "method": "updateDemandForLabour"},
+        # {"agent": "Model", "method": "updateTypeA_Price"},
+        # {"agent": "Model", "method": "updateTypeA_Quantity"},
+        # {"agent": "Model", "method": "updateTypeB"},
+        # {"agent": "Model", "method": "updateHouseholdsAveragePrices"}
+
+        # Daily events
+        self.daily_events = [
+            {"agent": "Model", "method": "GoodMarketDailyEvents"},
+            {"agent": "Firm", "method": "produce"},
+            {"agent": "Model", "method": "QuantityProduced"}
+        ]
+
+        # End of the month events
+        self.end_month_events = [
+            {"agent": "Model", "method": "firmsPayWages"},
+            {"agent": "Model", "method": "firmsPayProfits"}
+        ]
+
+    def monthly_events(self):
+
+        self.current_day = 1
+
+        while self.current_day <= 21:
+            # Schedule beginning of the month events
+            if self.current_day == 1:
+                self.beginning_month_events()
+
+            # Schedule daily events
+            if self.current_day >= 1 or self.current_day <= 21:
+                # print(self.current_day)
+                a = 1
+
+            if self.current_day == 20:
+                a = 2
+
+            self.current_day += 1
 
     def export_connections(self, filename):
         type_a_connections = []
@@ -153,24 +201,8 @@ class MacroModel(Model):
             print(f"Household {household.unique_id}: Savings = {household.m}")
 
     def step(self):
-        for household in self.Household_list:
-            household.m += 100 # Every household gets 100 pounds in savings
-            household.step()
-
-        # for firm in self.Firm_list:
-        #     firm.produce()
-        #     firm.new_wage()
-        #     firm.update_inv_range()
-        #     firm.update_price_range()
-        #     firm.increase_price()
-        #     firm.decrease_price()
-        #     firm.step()
-
+        self.schedule.step()
+        self.monthly_events()
         # Collect data
         self.datacollector.collect(self)
-        # self.export_connections('connect.xlsx')
-        # self.get_household_savings()
-
-    def end(self):
-        # Export connections to Excel file when the model stops
-        self.export_connections('connections.xlsx')
+        self.export_connections('connect.xlsx')
