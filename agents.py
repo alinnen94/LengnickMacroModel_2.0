@@ -86,15 +86,11 @@ class Firm(Agent):
     # following eq(10)
     def increase_price(self):
         self.p = self.p * (1 + random.uniform(0, self.theta))
-        print("increase price: " + self.p)
+        print("increase price: " + str(self.p))
 
     def decrease_price(self):
         self.p = self.p * (1 - random.uniform(0, self.theta))
-        print("decrease price: " + self.p)
-
-    def get_to_fire(self):
-        if len(self.connections_typeB) > 0:
-            return self.to_fire
+        print("decrease price: " + str(self.p))
 
 
 # Household class

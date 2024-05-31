@@ -189,7 +189,6 @@ class MacroModel(Model):
             # Schedule beginning of the month events
             if self.current_day == 1:
                 self.beginning_month_events()
-
             # Schedule daily events
             if self.current_day >= 1 or self.current_day <= 21:
                 self.daily_events()
@@ -257,24 +256,27 @@ class MacroModel(Model):
             constraints = [0] * self.num_typeA
 
             for f in self.Firm_list:
-                self.matrix_A_constraints[h][f] = 10
+                self.matrix_A_constraints[h.unique_id][f.unique_id] = 10
 
-            # Calculate total constraint and create constraints list
-            for f_index in range(self.num_typeA):
-                index = h.connections_typeA[f_index]
-
+            # # Calculate total constraint and create constraints list
+            # for f_index in range(self.num_typeA):
+            #     index = h.connections_typeA[f_index]
 
             #     constraint = self.matrix_A_constraints[index]
-            print(self.matrix_A_constraints)
+        print(self.matrix_A_constraints)
+
     def update_type_b(self):
         prob = 0
         firm = "a"
         for f in self.Firm_list:
-            for i in range(f.get_to_fire()):
-                to_fire = random.randint(0, len(f.connections_typeB) - 1)
-                household_id = f.connections_typeB.pop(to_fire)
-                print(household_id)
-                household_id.employed = False
+            if f.to_fire > 0:
+                for i in range(f.to_fire):
+                    # Ensure there are connections to fire from
+                    if len(f.connections_typeB) > 0:
+                        to_fire = random.randint(0, len(f.connections_typeB) - 1)
+                        household_id = f.connections_typeB.pop(to_fire)
+                        print(household_id)
+                        household_id.employed = False
 
         for h in self.Household_list:
             firm = self.Firm_list[h.connections_typeB[0]]
