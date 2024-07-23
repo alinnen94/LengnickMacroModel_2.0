@@ -6,29 +6,11 @@ import agents
 from agents import Firm, Household
 from mesa import Model
 from mesa.datacollection import DataCollector
-from mesa.time import DiscreteEventScheduler
+from mesa.time import RandomActivation
 import numpy as np
 import random
 import pandas as pd
 import statistics
-
-# Data collector functions
-
-
-# Return number of agents
-def get_num_agents(model):
-    agents = [a for a in model.schedule.agents]
-    return len(agents)
-
-
-# Sum of all agent savings
-def get_total_savings(model):
-    agent_savings = sum(agent.m for agent in model.schedule.agents if isinstance(agent, Household))
-
-
-# Returns firm prices
-def get_prices(model):
-    return [firm.p for firm in model.FI_list]
 
 
 # Model class
@@ -38,7 +20,7 @@ class MacroModel(Model):
     def __init__(self,
                  seed=1,
                  init_households=1000,
-                 F=100,
+                 init_firms=100,
                  num_typeA=7,
                  delta=0.019,
                  phi_max=1,
@@ -58,9 +40,9 @@ class MacroModel(Model):
                  Theta=0.75):
 
         super().__init__()
-        self.schedule = DiscreteEventScheduler(self, time_step=21)
+        self.schedule = RandomActivation(self)
         self.num_households = init_households
-        self.num_firms = F
+        self.num_firms = init_firms
         self.num_typeA = num_typeA
         self.Psi_price = Psi_price
         self.xi = xi
@@ -71,13 +53,10 @@ class MacroModel(Model):
         self.Firm_list = []
         self.current_day = 1
         self.total_production = 0
-        self.matrix_A_constraints = [[0] * self.num_firms for _ in range(self.num_households)]
-        # self.schedule_events()
-        # self.schedule = RandomActivation(self)
+        self.step_count = 0
 
         # Initialise random number generator. The same seed produces the same random number sequence
         np.random.seed(seed)
-
         # Create household agents for the model according to number set by user
         for i in range(self.num_households):
             # Set reservation wage, liquidity and consumption
@@ -97,11 +76,11 @@ class MacroModel(Model):
             # Set offered wage, inventory value and price level
             w = np.random.normal(loc=1, scale=0.2)
             inv = np.random.randint(low=0, high=10)
-            p = np.random.normal(loc=0.1, scale= 0.2)
+            p = np.random.normal(loc=0.1, scale=0.02)
             open_position = 0
 
             f = Firm(i + init_households, self, w, 0, 0, 0, inv * 0.9, inv * 1.1, 0, 0, p,
-                     p * 0.9, p * 1.1,delta, Phi_min, Phi_max, phi_min, phi_max, theta, lambda_,
+                     p * 0.9, p * 1.1, delta, Phi_min, Phi_max, phi_min, phi_max, theta, lambda_,
                      gamma, Theta, open_position, 0, 0, 0)
             self.schedule.add(f)
             self.Firm_list.append(f)
@@ -111,7 +90,8 @@ class MacroModel(Model):
         # Type B connections
         for household in self.Household_list:
             newF = random.randint(0, len(self.Firm_list) - 1)
-            household.connections_typeB.append(newF)
+            firm = self.Firm_list[newF]
+            household.connections_typeB.append(firm)
             household.employed = True
             self.Firm_list[newF].connections_typeB.append(household)
 
@@ -122,7 +102,6 @@ class MacroModel(Model):
             while counter < num_typeA:
                 f = np.random.randint(0, len(self.Firm_list) - 1)
                 firm = self.Firm_list[f]
-
                 if firm not in household.connections_typeA:
                     household.connections_typeA.append(firm)
                     firm.connections_typeA.append(household)
@@ -130,27 +109,59 @@ class MacroModel(Model):
                 else:
                     continue
 
+        # Type A constraints
+        self.matrix_a_constraints = [[None for _ in self.Household_list] for _ in self.Firm_list]
+
         # Variables to collect data for
         self.datacollector = DataCollector(
             model_reporters={
+                # HH liquidity
                 "Household Liquidity": lambda model: sum(
                     agent.m for agent in model.schedule.agents if isinstance(agent, Household)),
-                "Price": lambda model: statistics.mean(
+                # Price
+                "Mean Price": lambda model: statistics.mean(
                     agent.p for agent in model.schedule.agents if isinstance(agent, Firm)),
-                "Wage": lambda model: statistics.mean(
+                "Min Price": lambda model: min(
+                    agent.p for agent in model.schedule.agents if isinstance(agent, Firm)),
+                "Max Price": lambda model: max(
+                    agent.p for agent in model.schedule.agents if isinstance(agent, Firm)),
+                # Wage
+                "Mean Wage": lambda model: statistics.mean(
                     agent.w for agent in model.schedule.agents if isinstance(agent, Firm)),
-                "Open Positions": lambda model: sum(
+                "Min Wage": lambda model: min(
+                    agent.w for agent in model.schedule.agents if isinstance(agent, Firm)),
+                "Max Wage": lambda model: max(
+                    agent.w for agent in model.schedule.agents if isinstance(agent, Firm)),
+                # Vacancies
+                "Mean Open Positions": lambda model: statistics.mean(
                     agent.open_position for agent in model.schedule.agents if isinstance(agent, Firm)),
+                "Min Open Positions": lambda model: min(
+                    agent.open_position for agent in model.schedule.agents if isinstance(agent, Firm)),
+                "Max Open Positions": lambda model: max(
+                    agent.open_position for agent in model.schedule.agents if isinstance(agent, Firm)),
+                # Firm liquidity
                 "Firm Liquidity": lambda model: sum(
                     agent.m for agent in model.schedule.agents if isinstance(agent, Firm)),
-                "Employment": lambda model: sum(
+                # Employment rate
+                "Employment Rate": lambda model: sum(
                     agent.employed for agent in model.schedule.agents if isinstance(agent, Household))
+                                            / len(self.Household_list),
+                # Dividend
+                "Mean Dividend": lambda model: statistics.mean(
+                    agent.dividend for agent in model.schedule.agents if isinstance(agent, Household)),
+                "Min Dividend": lambda model: min(
+                    agent.dividend for agent in model.schedule.agents if isinstance(agent, Household)),
+                "Max Dividend": lambda model: max(
+                    agent.dividend for agent in model.schedule.agents if isinstance(agent, Household)),
+                # Production
+                "Total Production": lambda model: sum(
+                    agent.daily_produces for agent in model.schedule.agents if isinstance(agent, Firm)),
             },
             agent_reporters={}
         )
 
     # Schedule events
-        # Beginning of the month events
+    # Beginning of the month events
     def beginning_month_events(self):
         # Firms assign new wage (equation 5 in main paper)
         for firm in self.Firm_list:
@@ -166,12 +177,9 @@ class MacroModel(Model):
         self.update_type_b()
         self.update_households_average_prices()
 
-        # {"agent": "Model", "method": "updateTypeB"},
-        # {"agent": "Model", "method": "updateHouseholdsAveragePrices"}
-
     # Daily events
     def daily_events(self):
-        # self.good_market_daily_events()
+        self.good_market_daily_events()
         for firm in self.Firm_list:
             firm.produce()
         self.quantity_produced()
@@ -198,13 +206,15 @@ class MacroModel(Model):
 
             self.current_day += 1
 
-    def export_connections(self, filename):
+    def export_data(self, filename):
         type_a_connections = []
         type_b_connections = []
+        household_liquidity = []
 
         # Iterate through agents and collect connections
         for agent in self.schedule.agents:
             if isinstance(agent, Household):
+                household_liquidity.append((agent.unique_id, agent.m))
                 for firm in agent.connections_typeA:
                     type_a_connections.append((agent.unique_id, firm.unique_id))
             if isinstance(agent, Firm):
@@ -214,11 +224,13 @@ class MacroModel(Model):
         # Convert lists to pandas DataFrames
         df_type_a = pd.DataFrame(type_a_connections, columns=['Household', 'Firm'])
         df_type_b = pd.DataFrame(type_b_connections, columns=['Firm', 'Household'])
+        df_type_c = pd.DataFrame(household_liquidity, columns=['Household', 'Liquidity'])
 
         # Export DataFrames to Excel file
         with pd.ExcelWriter(filename) as writer:
             df_type_a.to_excel(writer, sheet_name='Type_A_Connections', index=False)
             df_type_b.to_excel(writer, sheet_name='Type_B_Connections', index=False)
+            df_type_c.to_excel(writer, sheet_name='Household_Liquidity', index=False)
 
     def get_random(self):
         return self.random
@@ -250,20 +262,49 @@ class MacroModel(Model):
                 f_new.connections_typeA.append(h)
 
     def update_type_a_quantity(self):
-        print(len(self.matrix_A_constraints))
         for h in self.Household_list:
             tot_constraint = 0
             constraints = [0] * self.num_typeA
 
-            for f in self.Firm_list:
-                self.matrix_A_constraints[h.unique_id][f.unique_id] = 10
+            # Calculate total constraint and create constraints list
+            for f_index in range(len(h.connections_typeA)):
+                type_a_index = h.connections_typeA[f_index]
+                # Firm index begins after household index
+                firm_index = (type_a_index.unique_id - len(self.Household_list))
+                # self.matrix_a_constraints[firm_index][h.unique_id] = 10
+                if self.matrix_a_constraints[firm_index][h.unique_id] is not None:
+                    tot_constraint += self.matrix_a_constraints[firm_index][h.unique_id]
+                constraints[f_index] = self.matrix_a_constraints[firm_index][h.unique_id]
 
-            # # Calculate total constraint and create constraints list
-            # for f_index in range(self.num_typeA):
-            #     index = h.connections_typeA[f_index]
+            if tot_constraint > 0:
+                prob = random.random()
+                f_index = -1
+                cumulative_prob = 0
 
-            #     constraint = self.matrix_A_constraints[index]
-        print(self.matrix_A_constraints)
+                # Find the firm to drop based on the probability of the constraints
+                while prob > cumulative_prob and f_index <= self.num_typeA:
+                    f_index += 1
+                    type_a_index = h.connections_typeA[f_index]
+                    firm_index = (type_a_index.unique_id - len(self.Household_list))
+                    if self.matrix_a_constraints[firm_index][h.unique_id] is not None:
+                        cumulative_prob += self.matrix_a_constraints[firm_index][h.unique_id] / tot_constraint
+
+                # Find a new firm to connect to
+                f_new = None
+                while f_new is None or f_new in h.connections_typeA:
+                    f_new = random.randint(0, len(self.Firm_list) - 1)
+
+                # Drop the link with the current firm and connect to the new firm
+                type_a_index = h.connections_typeA[f_index]
+                firm_index = (type_a_index.unique_id - len(self.Household_list))
+
+                h.connections_typeA.remove(h.connections_typeA[f_index])
+                h.connections_typeA.append(self.Firm_list[f_new])
+                self.Firm_list[firm_index].connections_typeA.remove(h)
+                self.Firm_list[f_new].connections_typeA.append(h)
+
+        # Reset the matrix of constraints
+        self.matrix_a_constraints = [[None for _ in self.Household_list] for _ in self.Firm_list]
 
     def update_type_b(self):
         prob = 0
@@ -274,28 +315,25 @@ class MacroModel(Model):
                     # Ensure there are connections to fire from
                     if len(f.connections_typeB) > 0:
                         to_fire = random.randint(0, len(f.connections_typeB) - 1)
-                        household_id = f.connections_typeB.pop(to_fire)
-                        print(household_id)
+                        household_id = f.connections_typeB[to_fire]
+                        f.connections_typeB.remove(household_id)
+                        household_id.connections_typeB.remove(f)
                         household_id.employed = False
 
+        # Update type B connections
         for h in self.Household_list:
-            firm = self.Firm_list[h.connections_typeB[0]]
+            firm = None
             if h.employed:
                 beta = 1
-                if len(h.connections_typeB) < 2:
-                    prob = self.pi if h.w <= firm.w else 1
-                else:
-                    print("Household employed by more than 1 firm")
+                firm = h.connections_typeB[0]
+                prob = self.pi if h.w <= firm.w else 1
             else:
                 beta = self.beta
                 prob = 1
 
             # Probability check
-            if random.random() < prob:
-                temp_list = []
-
-                for f in self.Firm_list:
-                    temp_list.append(f)
+            if random.uniform(0, 1) < prob:
+                temp_list = self.Firm_list.copy()
 
                 if h.employed:
                     temp_list.remove(firm)
@@ -303,8 +341,8 @@ class MacroModel(Model):
                 for r in range(beta):
                     rnd = random.randint(0, len(temp_list) - 1)
                     selected_firm = temp_list[rnd]
-
                     if h.employed and selected_firm.open_position > 0:
+                        firm = h.connections_typeB[0]
                         if selected_firm.w > firm.w:
                             # Update type B connections
                             h.connections_typeB.remove(firm)
@@ -317,13 +355,10 @@ class MacroModel(Model):
                     else:
                         if selected_firm.w >= h.w and selected_firm.open_position > 0:
                             # Update type B connections
-                            h.connections_typeB.remove(firm)
                             h.connections_typeB.append(selected_firm)
                             selected_firm.connections_typeB.append(h)
 
                             h.employed = True
-                            if len(firm.connections_typeB) > 0:
-                                firm.connections_typeB.remove(h)
 
                     temp_list.pop(rnd)
 
@@ -334,13 +369,15 @@ class MacroModel(Model):
             for f in household.connections_typeA:
                 p_total += f.p
             # Set household price as average of connected firm prices
-            household.p = p_total/self.num_typeA
+            household.p = p_total / self.num_typeA
 
     def good_market_daily_events(self):
         # Create randomised household list
-        random_household_list = random.sample(self.Household_list, len(self.Household_list))
+        household_list_shuffle = self.Household_list.copy()
+        random.shuffle(household_list_shuffle)
         # Iterate randomised household list
-        for household in random_household_list:
+        while len(household_list_shuffle) > 0:
+            household = household_list_shuffle[random.randint(0, len(household_list_shuffle) - 1)]
             temp_list = []
             for f in household.connections_typeA:
                 temp_list.append(f)
@@ -350,17 +387,17 @@ class MacroModel(Model):
             visited_firms = 0
 
             while household.m > 0 and (purchased_quantity / household_demands) < 0.95 and visited_firms < self.n:
-                f = random.randint(0, len(temp_list) - 1)
-                firm = temp_list[f]
+                firm = temp_list[random.randint(0, len(temp_list) - 1)]
 
-                firm.d += (household_demands - purchased_quantity)
+                firm.d = firm.d + (household_demands - purchased_quantity)
 
                 # Check if firm has enough goods to satisfy the demand of the household
                 transaction_quantity = min(household_demands - purchased_quantity, firm.inv)
 
-                # Goods constraints are updated - UNSURE
-                # self.matrix_A_constraints[household.unique_id][
-                #     firm.unique_id] = household_demands - purchased_quantity - transaction_quantity
+                # Goods constraints are updated
+                firm_index = (firm.unique_id - len(self.Household_list))
+                self.matrix_a_constraints[firm_index][household.unique_id] = (
+                        household_demands - purchased_quantity - transaction_quantity)
 
                 # Check if the household has enough liquidity
                 transaction_quantity = min(transaction_quantity, int(household.m / firm.p))
@@ -377,9 +414,13 @@ class MacroModel(Model):
                 # Update the all purchased quantity
                 purchased_quantity += transaction_quantity
 
+                # print(firm.m, household.m, purchased_quantity)
+
                 # Remove firm from the temp list of firms
                 temp_list.remove(firm)
                 visited_firms += 1
+
+            household_list_shuffle.remove(household)
 
     def quantity_produced(self):
         production = 0
@@ -390,17 +431,16 @@ class MacroModel(Model):
 
     def firms_pay_wages(self):
         for household in self.Household_list:
-            firm = self.Firm_list[household.connections_typeB[0]]
+            if len(household.connections_typeB) > 0:
+                firm = household.connections_typeB[0]
+                amount_paid = min(firm.w, (firm.m + firm.m_buffer))
+                household.m = household.m + amount_paid
 
-            amount_paid = min(firm.w, (firm.m + firm.m_buffer))
+                amount_from_m = min(firm.m, amount_paid)
+                amount_from_buffer = min((amount_paid - amount_from_m), firm.m_buffer)
 
-            household.m = household.m + amount_paid
-
-            amount_from_m = min(firm.m, amount_paid)
-            amount_from_buffer = min((amount_paid - amount_from_m), firm.m_buffer)
-
-            firm.m = firm.m - amount_from_m
-            firm.m_buffer = firm.m_buffer - amount_from_buffer
+                firm.m = firm.m - amount_from_m
+                firm.m_buffer = firm.m_buffer - amount_from_buffer
 
     def firms_pay_profits(self):
         aggregated_profit = 0
@@ -417,14 +457,17 @@ class MacroModel(Model):
 
         # Distribute profits among households
         for household in self.Household_list:
-            if aggregated_household_wealth != 0:
+            if aggregated_household_wealth > 0:
                 dividend = aggregated_profit * (household.m / aggregated_household_wealth)
                 household.dividend = dividend
                 household.m += dividend
+            else:
+                household.dividend = 0
 
     def step(self):
+        self.step_count += 1
         self.schedule.step()
         self.monthly_events()
         # Collect data
         self.datacollector.collect(self)
-        self.export_connections('connect.xlsx')
+        # self.export_data('connect.xlsx')
